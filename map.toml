@@ -1,17 +1,17 @@
-project = 4
+project = 7
 
 [repo]
 # The GitHub username of the repo owner
-owner = "Samk13"
+owner = { type = "organization", login = "KTH-Library" }
 # If the owner is an org, use:
 # owner = { type = "organization", login = "piemot" }
 
 # The name of the repository
-repo = "gh-projects-migration-test"
+repo = "invenio-datarepository"
 
 [[users]]
 trello = "samaa2"
-github = "Samk13"
+github = "KTH-Library"
 
 # Map Trello lists to GitHub Project statuses
 [[lists]]
