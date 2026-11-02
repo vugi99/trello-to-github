@@ -175,6 +175,7 @@ dist
 .DS_Store
 
 trello-data.json
+trello_*.json
 map.toml
 map_*.toml
 bun.lockb
