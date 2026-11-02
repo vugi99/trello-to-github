@@ -1,0 +1,8 @@
+# Ensure consistent LF line endings on all OS environments (including Windows CI)
+* text=auto eol=lf
+*.json text eol=lf
+*.ts text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
