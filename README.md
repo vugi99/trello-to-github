@@ -22,16 +22,18 @@ Then, clone this repository and install dependencies:
 
 > Note you must manually add the lists to the GitHub Project before running the import.
 
-```bash
+You can configure tokens via `.env` (copy `.env.example` to `.env`) or pass them via CLI flags or environment variables:
 
-export GH_TOKEN="your_github_token_here"
-# the classic token works for this with repo scope
+```bash
+# Create .env from template
+cp .env.example .env
+# Fill in GITHUB_TOKEN=... in .env
 
 # dry run
-bun run index.ts --github-token $GH_TOKEN --trello-export trello-data.json --map map.toml --dry-run
+bun run index.ts --trello-export trello-data.json --map map.toml --dry-run
 
 # actual run
-bun run index.ts --github-token $GH_TOKEN --trello-export trello-data.json --map map.toml
+bun run index.ts --trello-export trello-data.json --map map.toml
 ```
 
 ### Options

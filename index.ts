@@ -15,6 +15,7 @@ import {
 	getLabelsForCard as formatCardLabels,
 	mapMemberIds as formatMapMemberIds,
 } from "./lib/card";
+import { getGitHubToken, loadEnvFile } from "./lib/env";
 import {
 	type Label,
 	renderGithubFieldOption,
@@ -23,10 +24,21 @@ import {
 } from "./lib/label";
 import { BoardExport, MapFormat } from "./lib/schemas";
 
+// Load environment variables from .env file if present
+loadEnvFile();
+
 const program = new Command()
 	.version("v0.1.0")
 	.description("Import a Trello Project into GitHub Issues and Projects.")
-	.option("--github-token <token>", "GitHub Personal Access Token")
+	.option(
+		"--github-token <token>",
+		"GitHub Personal Access Token (or GITHUB_TOKEN / GH_TOKEN / PAT in .env)",
+	)
+	.option("--trello-key <key>", "Trello API Key (or TRELLO_KEY in .env)")
+	.option(
+		"--trello-token <token>",
+		"Trello API Token (or TRELLO_TOKEN in .env)",
+	)
 	.option(
 		"-m, --map <file.toml>",
 		"A path to a file that maps users and labels",
@@ -95,11 +107,9 @@ const group = await p.group(
 			}
 		},
 		ghToken: async () => {
-			if (opts.githubToken && typeof opts.githubToken === "string") {
-				return opts.githubToken;
-			}
-			if (typeof Bun.env.PAT === "string" && Bun.env.PAT.length > 1) {
-				return Bun.env.PAT;
+			const token = getGitHubToken(opts.githubToken);
+			if (token) {
+				return token;
 			}
 
 			return p.password({
