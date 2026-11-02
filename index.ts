@@ -173,10 +173,11 @@ const group = await p.group(
 					message: "Please enter the URL of your Trello board.",
 					placeholder: "https://trello.com/b/[board-id]",
 					validate: (val) => {
-						const url = URL.parse(val);
 						if (!val) {
 							return "Please enter a URL.";
-						} else if (!url) {
+						}
+						const url = URL.parse(val);
+						if (!url) {
 							return "Please enter a valid URL.";
 						} else if (url.hostname !== "trello.com") {
 							return "Please enter a Trello link.";

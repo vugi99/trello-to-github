@@ -42,7 +42,7 @@ export type MappedLabel = {
 		color: string;
 	};
 	github: {
-		id: number;
+		id: number | bigint;
 		name: string;
 		color: string;
 	};
@@ -61,7 +61,7 @@ export type ListMappedLabel = {
 	type: "listMapped";
 	trelloList: { id: string; name: string };
 	github: {
-		id: number;
+		id: number | bigint;
 		name: string;
 		color: string;
 	};
