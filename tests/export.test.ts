@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import TOML from "smol-toml";
-import { describe, expect, it } from "vitest";
 import { BoardExport, MapFormat } from "../lib/schemas";
 
 describe("real world example fixtures", () => {

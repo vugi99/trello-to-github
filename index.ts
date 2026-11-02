@@ -10,20 +10,17 @@ import terminalLink from "terminal-link";
 import invariant from "tiny-invariant";
 import z from "zod";
 import {
+	getCommentsForCard as formatCardComments,
+	getDescriptionForCard as formatCardDescription,
+	getLabelsForCard as formatCardLabels,
+	mapMemberIds as formatMapMemberIds,
+} from "./lib/card";
+import {
 	type Label,
 	renderGithubFieldOption,
 	renderGithubLabel,
 	renderTrelloLabel,
 } from "./lib/label";
-import {
-	type ValidMember,
-	getChecklistContentForCard as formatCardChecklist,
-	getCommentsForCard as formatCardComments,
-	getDescriptionForCard as formatCardDescription,
-	getLabelsForCard as formatCardLabels,
-	mapMemberId as formatMapMemberId,
-	mapMemberIds as formatMapMemberIds,
-} from "./lib/card";
 import { BoardExport, MapFormat } from "./lib/schemas";
 
 const program = new Command()
@@ -613,9 +610,7 @@ if (statusFieldsToCreate.length > 0) {
 	p.log.info(
 		`${chalk.dim("→")} Please create them in your GitHub Project settings at:\n  ${chalk.blue.underline(`https://github.com/${typeof map.repo.owner === "string" ? `users/${map.repo.owner}` : `orgs/${map.repo.owner.login}`}/projects/${projectInfo?.projectId?.split("_").pop()}/settings`)}`,
 	);
-	p.log.info(
-		`${chalk.dim("→")} After creating them, re-run this tool.`,
-	);
+	p.log.info(`${chalk.dim("→")} After creating them, re-run this tool.`);
 }
 
 if (usedStatusWithoutProject) {
@@ -692,7 +687,9 @@ if (labelsToCreate.length > 0) {
 		} catch (e) {
 			if (e instanceof RequestError && e.status === 422) {
 				// Label already exists, skip it
-				p.log.warn(`Label ${chalk.yellow(label.github.name)} already exists, skipping...`);
+				p.log.warn(
+					`Label ${chalk.yellow(label.github.name)} already exists, skipping...`,
+				);
 				skippedCount++;
 			} else {
 				// Re-throw other errors
@@ -701,11 +698,9 @@ if (labelsToCreate.length > 0) {
 		}
 		spin.message(`Creating labels [${count + 1}/${labelsToCreate.length}]`);
 	}
-	spin.stop(`Created ${createdCount} labels${skippedCount > 0 ? `, skipped ${skippedCount} existing labels` : ""}.`);
-}
-
-function mapMemberId(trelloMemberId: string): string | null {
-	return formatMapMemberId(trelloMemberId, trello.members, validMembers);
+	spin.stop(
+		`Created ${createdCount} labels${skippedCount > 0 ? `, skipped ${skippedCount} existing labels` : ""}.`,
+	);
 }
 
 function mapMemberIds(trelloMemberIds: string[]): string[] {
@@ -720,10 +715,6 @@ function getDescriptionForCard(card: TrelloCard): string {
 
 function getLabelsForCard(card: TrelloCard): string[] {
 	return formatCardLabels(card, mappedLabels);
-}
-
-function getChecklistContentForCard(card: TrelloCard): string | null {
-	return formatCardChecklist(card, trello.checklists);
 }
 
 function getCommentsForCard(card: TrelloCard): string[] {
@@ -748,7 +739,11 @@ async function addIssueToProject(issueNodeId: string) {
 	return (res as any).addProjectV2ItemById.item.id;
 }
 
-async function setIssueStatus(itemId: string, statusId: string, statusName: string) {
+async function setIssueStatus(
+	itemId: string,
+	statusId: string,
+	statusName: string,
+) {
 	invariant(projectInfo, "projectInfo must be set to call `setIssueStatus()`.");
 	try {
 		const result = await octokit.graphql(`
@@ -767,32 +762,38 @@ async function setIssueStatus(itemId: string, statusId: string, statusName: stri
 				}
 			}`);
 		// biome-ignore lint/suspicious/noExplicitAny: The GraphQL API is not typed
-		const updatedStatus = (result as any).updateProjectV2ItemFieldValue.projectV2Item.fieldValueByName?.name;
+		const updatedStatus = (result as any).updateProjectV2ItemFieldValue
+			.projectV2Item.fieldValueByName?.name;
 		if (updatedStatus) {
 			p.log.info(`✓ Status set to: ${chalk.green(updatedStatus)}`);
 		}
 	} catch (error) {
-		p.log.error(`Failed to set status to ${chalk.yellow(statusName)}: ${error}`);
+		p.log.error(
+			`Failed to set status to ${chalk.yellow(statusName)}: ${error}`,
+		);
 		throw error;
 	}
 }
 
 async function getExistingProjectItems() {
-	invariant(projectInfo, "projectInfo must be set to call `getExistingProjectItems()`.");
-	
+	invariant(
+		projectInfo,
+		"projectInfo must be set to call `getExistingProjectItems()`.",
+	);
+
 	const queryTarget = map.repo.owner;
 	const ownerType = typeof queryTarget === "string" ? "user" : queryTarget.type;
-	
+
 	const items: Array<{
 		id: string;
 		issueNumber: number;
 		issueTitle: string;
 		currentStatus: string | null;
 	}> = [];
-	
+
 	let hasNextPage = true;
 	let cursor: string | null = null;
-	
+
 	while (hasNextPage) {
 		const query = `
 			query {
@@ -822,13 +823,13 @@ async function getExistingProjectItems() {
 				}
 			}
 		`;
-		
+
 		// biome-ignore lint/suspicious/noExplicitAny: The GraphQL API is not typed
 		const response: any = await octokit.graphql(query);
 		const itemsData = response[ownerType].projectV2.items;
-		
+
 		for (const item of itemsData.nodes) {
-			if (item.content && item.content.number) {
+			if (item.content?.number) {
 				items.push({
 					id: item.id,
 					issueNumber: item.content.number,
@@ -837,11 +838,11 @@ async function getExistingProjectItems() {
 				});
 			}
 		}
-		
+
 		hasNextPage = itemsData.pageInfo.hasNextPage;
 		cursor = itemsData.pageInfo.endCursor;
 	}
-	
+
 	return items;
 }
 
@@ -849,38 +850,40 @@ async function getExistingProjectItems() {
 if (projectInfo && validStatusFields.size > 0) {
 	const existingSpin = p.spinner({ indicator: "timer" });
 	existingSpin.start("Checking existing project items...");
-	
+
 	const existingItems = await getExistingProjectItems();
-	existingSpin.stop(`Found ${chalk.blue(existingItems.length)} existing items in project`);
-	
+	existingSpin.stop(
+		`Found ${chalk.blue(existingItems.length)} existing items in project`,
+	);
+
 	if (existingItems.length > 0) {
 		p.log.info("Checking and updating statuses for existing items...");
-		
+
 		let updatedCount = 0;
 		let skippedCount = 0;
-		
+
 		for (const item of existingItems) {
 			// Try to find the corresponding Trello card by matching title
 			const trelloCard = trello.cards.find((card) => {
 				// Simple match by title - you might want to make this more sophisticated
 				return card.name === item.issueTitle;
 			});
-			
+
 			if (!trelloCard) {
 				// Issue doesn't match any Trello card, skip it
 				skippedCount++;
 				continue;
 			}
-			
+
 			// Get the expected status for this card based on its Trello list
 			const expectedStatus = validStatusFields.get(trelloCard.idList);
-			
+
 			if (!expectedStatus) {
 				// No status mapping for this list
 				skippedCount++;
 				continue;
 			}
-			
+
 			// Check if the current status matches the expected status
 			if (item.currentStatus !== expectedStatus.name) {
 				p.log.info(
@@ -892,7 +895,7 @@ if (projectInfo && validStatusFields.size > 0) {
 				skippedCount++;
 			}
 		}
-		
+
 		p.log.info(
 			`Updated ${chalk.green(updatedCount)} existing items, skipped ${chalk.dim(skippedCount)} items`,
 		);
@@ -939,7 +942,7 @@ for (const [i, card] of trello.cards.entries()) {
 		const itemId = await addIssueToProject(issue.data.node_id);
 		const cardList = trello.lists.find((list) => list.id === card.idList);
 		const status = validStatusFields.get(card.idList);
-		
+
 		if (status) {
 			p.log.info(
 				`Setting "${chalk.blue(card.name)}" (from list "${chalk.cyan(cardList?.name)}") to status ${chalk.green(status.name)}`,
