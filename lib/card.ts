@@ -176,7 +176,28 @@ export function getDescriptionForCard(
 	if (customAttachmentLines) {
 		body += customAttachmentLines.join("\n");
 	} else {
-		body += formatCardAttachments(card.attachments, uploadedUrlMap).join("\n");
+		// Do not duplicate attachments that are already embedded/referenced in card.desc
+		const unreferencedAttachments = card.attachments.filter((att) => {
+			if (!card.desc) return true;
+			if (
+				card.desc.includes(att.url) ||
+				(att.id && card.desc.includes(att.id))
+			) {
+				return false;
+			}
+			const remapped = uploadedUrlMap?.get(att.url);
+			if (remapped && card.desc.includes(remapped)) {
+				return false;
+			}
+			return true;
+		});
+		const attLines = formatCardAttachments(
+			unreferencedAttachments,
+			uploadedUrlMap,
+		);
+		if (attLines.length > 0) {
+			body += attLines.join("\n");
+		}
 	}
 
 	return body;

@@ -94,6 +94,33 @@ describe("card conversion & formatting", () => {
 			expect(body).not.toContain("https://trello.com/att1/pipeline.png");
 		});
 
+		it("does not duplicate attachments that are already embedded in card description", () => {
+			const cardWithEmbeddedImage = {
+				...mockCard,
+				desc: "Look at this architecture:\n\n![pipeline.png](https://trello.com/att1/pipeline.png)",
+			};
+			const uploadedUrlMap = new Map([
+				[
+					"https://trello.com/att1/pipeline.png",
+					"https://github.com/user-attachments/assets/mapped-123",
+				],
+			]);
+			const body = getDescriptionForCard(
+				cardWithEmbeddedImage,
+				[],
+				undefined,
+				uploadedUrlMap,
+			);
+			expect(body).toContain(
+				"![pipeline.png](https://github.com/user-attachments/assets/mapped-123)",
+			);
+			const occurrences =
+				body.split(
+					"![pipeline.png](https://github.com/user-attachments/assets/mapped-123)",
+				).length - 1;
+			expect(occurrences).toBe(1);
+		});
+
 		it("handles card with empty description and no checklists", () => {
 			const emptyCard: TrelloCard = {
 				...mockCard,
