@@ -229,7 +229,7 @@ async function getTrelloData(): Promise<{
 		const resp = await fetch(source);
 		if (!resp.ok) {
 			p.note(
-				await resp.body?.text(),
+				await resp.text(),
 				`HTTP error fetching Trello source [${chalk.red(resp.status)}]`,
 			);
 			p.cancel(
