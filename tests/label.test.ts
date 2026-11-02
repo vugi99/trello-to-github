@@ -25,7 +25,6 @@ describe("label rendering", () => {
 		expect(() =>
 			renderTrelloLabel({
 				type: "skipped",
-				// @ts-expect-error testing invalid color
 				trello: { name: "Bad", color: "non_existent_color" },
 			}),
 		).toThrow(/should be a valid Trello color/);

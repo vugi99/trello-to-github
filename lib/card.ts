@@ -111,8 +111,7 @@ export function getLabelsForCard(
 	const res: string[] = [];
 	for (const trelloName of card.labels.map((label) => label.name)) {
 		const found = mappedLabels.find(
-			(label) =>
-				label.type !== "listMapped" && label.trello.name === trelloName,
+			(label) => "trello" in label && label.trello.name === trelloName,
 		);
 		if (found && "github" in found && "name" in found.github) {
 			res.push(found.github.name);
