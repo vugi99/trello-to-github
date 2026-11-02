@@ -2,9 +2,69 @@ import type { Label } from "./label";
 import type { Trello } from "./schemas";
 
 export type TrelloCard = Trello["cards"][number];
+export type TrelloList = Trello["lists"][number];
 export type TrelloChecklist = Trello["checklists"][number];
 export type TrelloAction = Trello["actions"][number];
 export type TrelloMember = Trello["members"][number];
+
+export interface ExcludedListsResult {
+	excludedListIds: Set<string>;
+	excludedLists: TrelloList[];
+	invalidKeys: string[];
+}
+
+export function resolveExcludedLists(
+	trelloLists: TrelloList[],
+	excludeKeys: string[],
+): ExcludedListsResult {
+	const excludedListIds = new Set<string>();
+	const excludedLists: TrelloList[] = [];
+	const invalidKeys: string[] = [];
+
+	for (const rawKey of excludeKeys) {
+		const key = rawKey.trim();
+		if (!key) continue;
+
+		const match = trelloLists.find(
+			(list) =>
+				list.id === key ||
+				list.name.toLowerCase() === key.toLowerCase() ||
+				list.name === key,
+		);
+
+		if (match) {
+			if (!excludedListIds.has(match.id)) {
+				excludedListIds.add(match.id);
+				excludedLists.push(match);
+			}
+		} else {
+			invalidKeys.push(key);
+		}
+	}
+
+	return { excludedListIds, excludedLists, invalidKeys };
+}
+
+export function filterCardsByExcludedLists(
+	cards: TrelloCard[],
+	excludedListIds: Set<string>,
+): {
+	includedCards: TrelloCard[];
+	excludedCards: TrelloCard[];
+} {
+	const includedCards: TrelloCard[] = [];
+	const excludedCards: TrelloCard[] = [];
+
+	for (const card of cards) {
+		if (excludedListIds.has(card.idList)) {
+			excludedCards.push(card);
+		} else {
+			includedCards.push(card);
+		}
+	}
+
+	return { includedCards, excludedCards };
+}
 
 export interface ValidMember {
 	trelloName: string;

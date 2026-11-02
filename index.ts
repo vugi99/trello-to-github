@@ -10,10 +10,12 @@ import terminalLink from "terminal-link";
 import invariant from "tiny-invariant";
 import z from "zod";
 import {
+	filterCardsByExcludedLists,
 	getCommentsForCard as formatCardComments,
 	getDescriptionForCard as formatCardDescription,
 	getLabelsForCard as formatCardLabels,
 	mapMemberIds as formatMapMemberIds,
+	resolveExcludedLists,
 } from "./lib/card";
 import { getGitHubToken, loadEnvFile } from "./lib/env";
 import {
@@ -56,6 +58,11 @@ const program = new Command()
 		"--keep-closed-lists",
 		"Also transfer cards that are in a closed (archived) list",
 	)
+	.option(
+		"--exclude-column <columns...>",
+		"Names or IDs of Trello columns/lists to exclude from conversion",
+	)
+	.option("--exclude-list <lists...>", "Alias for --exclude-column")
 	.addOption(
 		new Option(
 			"--trello-export <file.json>",
@@ -288,6 +295,36 @@ if (!opts.keepClosedLists) {
 	);
 }
 
+const cliExcluded = [
+	...(Array.isArray(opts.excludeColumn)
+		? opts.excludeColumn
+		: opts.excludeColumn
+			? [opts.excludeColumn]
+			: []),
+	...(Array.isArray(opts.excludeList)
+		? opts.excludeList
+		: opts.excludeList
+			? [opts.excludeList]
+			: []),
+];
+const tomlExcluded = [
+	...map.skip.lists,
+	...map.skip.columns,
+	...map.lists.filter((l) => l.skip).map((l) => l.list),
+];
+const allExcludeKeys = [...cliExcluded, ...tomlExcluded];
+const {
+	excludedListIds,
+	excludedLists,
+	invalidKeys: invalidExcludedLists,
+} = resolveExcludedLists(trello.lists, allExcludeKeys);
+
+const { includedCards, excludedCards } = filterCardsByExcludedLists(
+	trello.cards,
+	excludedListIds,
+);
+trello.cards = includedCards;
+
 const octokit = new Octokit({ auth: group.ghToken });
 
 const repoData = {
@@ -447,11 +484,15 @@ for (const trelloLabel of trello.labels) {
 }
 
 for (const mapping of map.lists) {
+	if (mapping.skip) continue;
 	const trelloList = trello.lists.find(
 		(list) => list.id === mapping.list || list.name === mapping.list,
 	);
 	if (!trelloList) {
 		invalidLists.push(mapping.list);
+		continue;
+	}
+	if (excludedListIds.has(trelloList.id)) {
 		continue;
 	}
 
@@ -513,23 +554,18 @@ for (const mapping of map.lists) {
 	}
 }
 
-const skippedLists: { id: string; name: string }[] = [];
-
-for (const listKey of map.skip.lists) {
-	const trelloList = trello.lists.find(
-		(list) => list.id === listKey || list.name === listKey,
-	);
-
-	if (trelloList) {
-		skippedLists.push(trelloList);
-	} else {
-		invalidLists.push(listKey);
-	}
+if (invalidExcludedLists.length > 0) {
+	invalidLists.push(...invalidExcludedLists);
 }
 
-trello.cards = trello.cards.filter(
-	(card) => !skippedLists.some((list) => list.id === card.idList),
-);
+if (excludedLists.length > 0) {
+	const excludedNames = listConjunction.format(
+		excludedLists.map((l) => chalk.yellow(l.name)),
+	);
+	p.log.info(
+		`Excluded columns (${chalk.yellow(excludedLists.length)} columns, ${chalk.yellow(excludedCards.length)} cards skipped): ${excludedNames}`,
+	);
+}
 
 const mappedLabels = labels.filter(
 	(l) =>

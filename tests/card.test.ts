@@ -1,14 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import {
+	filterCardsByExcludedLists,
 	getChecklistContentForCard,
 	getCommentsForCard,
 	getDescriptionForCard,
 	getLabelsForCard,
 	mapMemberId,
 	mapMemberIds,
+	resolveExcludedLists,
 	type TrelloAction,
 	type TrelloCard,
 	type TrelloChecklist,
+	type TrelloList,
 	type TrelloMember,
 	type ValidMember,
 } from "../lib/card";
@@ -213,6 +216,60 @@ describe("card conversion & formatting", () => {
 			expect(comments[0]).toContain("First comment");
 			expect(comments[1]).toContain("@bob-gh");
 			expect(comments[1]).toContain("Second comment");
+		});
+	});
+
+	describe("excluding columns / lists", () => {
+		const mockLists: TrelloList[] = [
+			{ id: "l1", name: "Backlog", closed: false },
+			{ id: "l2", name: "In Progress", closed: false },
+			{ id: "l3", name: "Archive / Old", closed: false },
+			{ id: "l4", name: "Trash", closed: false },
+		];
+
+		const cards: TrelloCard[] = [
+			{ ...mockCard, id: "card1", idList: "l1" },
+			{ ...mockCard, id: "card2", idList: "l2" },
+			{ ...mockCard, id: "card3", idList: "l3" },
+			{ ...mockCard, id: "card4", idList: "l4" },
+		];
+
+		it("resolves excluded lists by exact name, case-insensitive name, and ID", () => {
+			const { excludedListIds, excludedLists, invalidKeys } =
+				resolveExcludedLists(mockLists, ["backlog", "l3", "NonExistent"]);
+
+			expect(excludedListIds.has("l1")).toBe(true);
+			expect(excludedListIds.has("l3")).toBe(true);
+			expect(excludedListIds.size).toBe(2);
+			expect(excludedLists.map((l) => l.name)).toEqual([
+				"Backlog",
+				"Archive / Old",
+			]);
+			expect(invalidKeys).toEqual(["NonExistent"]);
+		});
+
+		it("deduplicates keys and ignores empty strings", () => {
+			const { excludedListIds, excludedLists } = resolveExcludedLists(
+				mockLists,
+				["Trash", "trash", "l4", "   "],
+			);
+
+			expect(excludedListIds.size).toBe(1);
+			expect(excludedLists[0].name).toBe("Trash");
+		});
+
+		it("filters out cards belonging to excluded lists", () => {
+			const { excludedListIds } = resolveExcludedLists(mockLists, [
+				"Backlog",
+				"Trash",
+			]);
+			const { includedCards, excludedCards } = filterCardsByExcludedLists(
+				cards,
+				excludedListIds,
+			);
+
+			expect(includedCards.map((c) => c.id)).toEqual(["card2", "card3"]);
+			expect(excludedCards.map((c) => c.id)).toEqual(["card1", "card4"]);
 		});
 	});
 });

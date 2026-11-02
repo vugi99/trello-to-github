@@ -152,6 +152,33 @@ describe("schemas", () => {
 			});
 		});
 
+		it("validates map with skip.lists, skip.columns, and lists[].skip", () => {
+			const mapData = {
+				repo: { owner: "user", repo: "repo" },
+				labels: [],
+				lists: [
+					{
+						list: "Discarded",
+						skip: true,
+					},
+					{
+						list: "To Do",
+						status: "Todo",
+					},
+				],
+				skip: {
+					lists: ["Trash"],
+					columns: ["Archived Ideas"],
+				},
+			};
+
+			const parsed = MapFormat.parse(mapData);
+			expect(parsed.lists[0].skip).toBe(true);
+			expect(parsed.lists[1].skip).toBe(false);
+			expect(parsed.skip.lists).toEqual(["Trash"]);
+			expect(parsed.skip.columns).toEqual(["Archived Ideas"]);
+		});
+
 		it("rejects map with invalid label color format", () => {
 			const mapData = {
 				repo: { owner: "user", repo: "repo" },

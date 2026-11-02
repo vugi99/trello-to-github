@@ -164,6 +164,8 @@ export const MapFormat = z.object({
 		.array(
 			z.object({
 				list: z.string().min(1),
+				// Whether to skip/exclude this list and its cards from conversion
+				skip: z.boolean().optional().default(false),
 				// `lists[].status` is only valid if `.project` is set
 				status: z.union([z.int(), z.string().min(1)]).optional(),
 				// Whether to create the status field option if it doesn't exist (only works with status)
@@ -177,9 +179,10 @@ export const MapFormat = z.object({
 		.default([]),
 	skip: z
 		.object({
-			// Do not migrate a card if it is in any of these lists
+			// Do not migrate a card if it is in any of these lists / columns
 			lists: z.array(z.string().min(1)).optional().default([]),
+			columns: z.array(z.string().min(1)).optional().default([]),
 		})
 		.optional()
-		.default({ lists: [] }),
+		.default({ lists: [], columns: [] }),
 });

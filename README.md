@@ -47,6 +47,9 @@ bun run index.ts --trello-export trello-data.json --map map.toml
 - `--dry-run`  
   Preview the migration, showing what would be transferred without making changes.
 
+- `--exclude-column <columns...>` (or `--exclude-list <lists...>`)  
+  Names or IDs of Trello columns/lists to exclude from the conversion. Cards in these columns will be skipped.
+
 - `--keep-closed`  
   Also transfer cards that have been closed (archived) on Trello.
 
@@ -100,6 +103,15 @@ github = "Samk13"
 list = "USE CASE/USER STORIES->KRAV 🧩"
 status = "USE CASE/USER STORIES->KRAV 🧩"
 create = true
+
+# Option A: Exclude a column directly in [[lists]]
+[[lists]]
+list = "Archive / Dump"
+skip = true
+
+# Option B: Exclude columns via [skip] table
+[skip]
+columns = ["Spam", "Drafts"]
 
 [[labels]]
 trello = "digital tjänst"
