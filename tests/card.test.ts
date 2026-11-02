@@ -75,7 +75,7 @@ describe("card conversion & formatting", () => {
 				"> Migrated from [Trello Card](https://trello.com/c/c1/setup-ci-cd)",
 			);
 			expect(body).toContain(
-				"- [pipeline.png](https://trello.com/att1/pipeline.png)",
+				"![pipeline.png](https://trello.com/att1/pipeline.png)",
 			);
 		});
 

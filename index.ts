@@ -17,7 +17,8 @@ import {
 	mapMemberIds as formatMapMemberIds,
 	resolveExcludedLists,
 } from "./lib/card";
-import { getGitHubToken, loadEnvFile } from "./lib/env";
+import { getGitHubToken, getTrelloAuth, loadEnvFile } from "./lib/env";
+import { processImagesForCard } from "./lib/image";
 import {
 	type Label,
 	renderGithubFieldOption,
@@ -119,6 +120,10 @@ const group = await p.group(
 				return token;
 			}
 
+			if (opts.dryRun) {
+				return "dry-run-token";
+			}
+
 			return p.password({
 				message: `Provide a ${chalk.underline.blue(terminalLink("Personal Access Token", "https://github.com/settings/tokens"))} with at least the \`${chalk.green("repo")}\` scope.\n${chalk.dim("Issues will be owned by the user this token belongs to.")}`,
 				validate: (val) => {
@@ -188,7 +193,7 @@ const group = await p.group(
 							return "Please enter a valid URL.";
 						} else if (url.hostname !== "trello.com") {
 							return "Please enter a Trello link.";
-						} else if (!/\/b\/\d+/.test(url.pathname)) {
+						} else if (!/\/b\/[a-zA-Z0-9]+/.test(url.pathname)) {
 							return "Please enter a Trello board link.";
 						}
 					},
@@ -233,14 +238,22 @@ async function getTrelloData(): Promise<{
 
 	let trelloVal: unknown;
 	if (sourceType === "url") {
-		const resp = await fetch(source);
+		let fetchUrl = source;
+		if (
+			fetchUrl.includes("trello.com/b/") &&
+			!fetchUrl.split("?")[0].endsWith(".json")
+		) {
+			const clean = fetchUrl.split("?")[0].split("#")[0].replace(/\/+$/, "");
+			fetchUrl = `${clean}.json`;
+		}
+		const resp = await fetch(fetchUrl);
 		if (!resp.ok) {
 			p.note(
 				await resp.text(),
 				`HTTP error fetching Trello source [${chalk.red(resp.status)}]`,
 			);
 			p.cancel(
-				`Failed to fetch trello source from ${chalk.underline.cyan(source)}.`,
+				`Failed to fetch trello source from ${chalk.underline.cyan(fetchUrl)}.`,
 			);
 			process.exit(1);
 		}
@@ -325,6 +338,7 @@ const { includedCards, excludedCards } = filterCardsByExcludedLists(
 );
 trello.cards = includedCards;
 
+const trelloAuth = getTrelloAuth(opts.trelloKey, opts.trelloToken);
 const octokit = new Octokit({ auth: group.ghToken });
 
 const repoData = {
@@ -335,26 +349,98 @@ const repoData = {
 const defaultHeaders = { "X-GitHub-Api-Version": "2022-11-28" };
 const baseRequest = { ...repoData, headers: defaultHeaders };
 
-const githubLabels = await octokit.request("GET /repos/{owner}/{repo}/labels", {
-	...baseRequest,
-});
-const githubMilestones = await octokit.request(
-	"GET /repos/{owner}/{repo}/milestones",
-	{
-		...baseRequest,
-	},
-);
+let repositoryId: number | string | bigint = 0;
+// biome-ignore lint/suspicious/noExplicitAny: Octokit response data types
+let githubLabels: { data: any[] } = { data: [] };
+// biome-ignore lint/suspicious/noExplicitAny: Octokit response data types
+let githubMilestones: { data: any[] } = { data: [] };
+
+if (opts.dryRun && group.ghToken === "dry-run-token") {
+	repositoryId = 12345678;
+} else {
+	try {
+		const repoInfo = await octokit.request(
+			"GET /repos/{owner}/{repo}",
+			baseRequest,
+		);
+		repositoryId = repoInfo.data.id;
+		githubLabels = await octokit.request(
+			"GET /repos/{owner}/{repo}/labels",
+			baseRequest,
+		);
+		githubMilestones = await octokit.request(
+			"GET /repos/{owner}/{repo}/milestones",
+			baseRequest,
+		);
+	} catch (e) {
+		if (opts.dryRun) {
+			repositoryId = 12345678;
+			p.log.warn(
+				`[dry-run] Could not access GitHub repository ${repoData.owner}/${repoData.repo}. Simulating metadata for dry run.`,
+			);
+		} else {
+			throw e;
+		}
+	}
+}
+
+// In dry-run mode, if githubLabels or githubMilestones are empty because of simulated mode,
+// populate them with mapped labels and milestones so dry-run validation can proceed
+if (opts.dryRun && githubLabels.data.length === 0) {
+	for (const [i, l] of map.labels.entries()) {
+		if (typeof l.github === "string") {
+			githubLabels.data.push({
+				id: 1000 + i,
+				name: l.github,
+				color: "color" in l && l.color ? l.color.replace(/^#/, "") : "ededed",
+			});
+		}
+	}
+	for (const [i, l] of map.lists.entries()) {
+		if (typeof l.label === "string") {
+			githubLabels.data.push({
+				id: 2000 + i,
+				name: l.label,
+				color: "ededed",
+			});
+		}
+	}
+}
+
+if (opts.dryRun && githubMilestones.data.length === 0) {
+	for (const [i, l] of map.lists.entries()) {
+		if (l.milestone) {
+			githubMilestones.data.push({
+				id: i + 1,
+				number: i + 1,
+				title: String(l.milestone),
+			});
+		}
+	}
+}
 
 const users = [];
 for (const user of map.users) {
 	try {
-		const githubUser = await octokit.request("GET /users/{username}", {
-			username: user.github,
-			headers: defaultHeaders,
-		});
-		users.push({ trelloName: user.trello, github: githubUser });
+		if (opts.dryRun && group.ghToken === "dry-run-token") {
+			users.push({
+				trelloName: user.trello,
+				github: { data: { login: user.github } },
+			});
+		} else {
+			const githubUser = await octokit.request("GET /users/{username}", {
+				username: user.github,
+				headers: defaultHeaders,
+			});
+			users.push({ trelloName: user.trello, github: githubUser });
+		}
 	} catch (e) {
-		if (e instanceof RequestError && e.status === 404) {
+		if (opts.dryRun) {
+			users.push({
+				trelloName: user.trello,
+				github: { data: { login: user.github } },
+			});
+		} else if (e instanceof RequestError && e.status === 404) {
 			// this member doesn't exist
 			users.push({
 				trelloName: user.trello,
@@ -367,64 +453,103 @@ for (const user of map.users) {
 	}
 }
 
-async function getProjectInfo() {
+async function getProjectInfo(): Promise<{
+	projectId: string;
+	projectName: string;
+	statusFieldId: string;
+	statusFieldOptions: Array<{ id: string; name: string; color: string }>;
+} | null> {
 	if (!map.project) {
 		return null;
 	}
+
+	const fallbackOptions = map.lists
+		.filter((l) => Boolean(l.status))
+		.map((l, i) => ({
+			id: `status_opt_${i}`,
+			name: String(l.status),
+			color: "BLUE",
+		}));
+
+	if (opts.dryRun && group.ghToken === "dry-run-token") {
+		return {
+			projectId: `PVT_dryrun_${map.project}`,
+			projectName: `Dry Run Project ${map.project}`,
+			statusFieldId: "PVTF_status",
+			statusFieldOptions: fallbackOptions,
+		};
+	}
+
 	const queryTarget =
 		typeof map.repo.owner === "object" && map.repo.owner.type === "organization"
 			? "organization"
 			: "user";
 	const queryLogin =
 		typeof map.repo.owner === "object" ? map.repo.owner.login : map.repo.owner;
-	const response = await octokit.graphql(`
-		query {
-			${queryTarget}(login: "${queryLogin}") {
-				projectV2(number: ${map.project}) {
-					id
-					title
-					fields(first: 100) {
-						nodes {
-							... on ProjectV2FieldCommon {
-								id
-								name
-							}
-							... on ProjectV2SingleSelectField {
-								options {
+
+	try {
+		const response = await octokit.graphql(`
+			query {
+				${queryTarget}(login: "${queryLogin}") {
+					projectV2(number: ${map.project}) {
+						id
+						title
+						fields(first: 100) {
+							nodes {
+								... on ProjectV2FieldCommon {
 									id
 									name
-									color
+								}
+								... on ProjectV2SingleSelectField {
+									options {
+										id
+										name
+										color
+									}
 								}
 							}
 						}
-					}
-				}  
+					}  
+				}
 			}
+		`);
+
+		// Color is one of: BLUE, GRAY, GREEN, ORANGE, PINK, PURPLE, RED, YELLOW
+
+		// biome-ignore lint/suspicious/noExplicitAny: The GraphQL API is not typed, but accessing results mirrors the query.
+		const res = response as any;
+
+		const statusField: StatusFieldInfo = res[
+			queryTarget
+		].projectV2.fields.nodes.find(
+			(field: Pick<StatusFieldInfo, "name">) => field.name === "Status",
+		);
+
+		invariant(
+			statusField,
+			"every Project should have a Status field (probably? If this is violated, please file an issue.)",
+		);
+
+		return {
+			projectId: res[queryTarget].projectV2.id,
+			projectName: res[queryTarget].projectV2.title,
+			statusFieldId: statusField.id,
+			statusFieldOptions: statusField.options,
+		};
+	} catch (e) {
+		if (opts.dryRun) {
+			p.log.warn(
+				`[dry-run] Could not query GitHub Project ${map.project}. Simulating project.`,
+			);
+			return {
+				projectId: `PVT_dryrun_${map.project}`,
+				projectName: `Dry Run Project ${map.project}`,
+				statusFieldId: "PVTF_status",
+				statusFieldOptions: fallbackOptions,
+			};
 		}
-  `);
-
-	// Color is one of: BLUE, GRAY, GREEN, ORANGE, PINK, PURPLE, RED, YELLOW
-
-	// biome-ignore lint/suspicious/noExplicitAny: The GraphQL API is not typed, but accessing results mirrors the query.
-	const res = response as any;
-
-	const statusField: StatusFieldInfo = res[
-		queryTarget
-	].projectV2.fields.nodes.find(
-		(field: Pick<StatusFieldInfo, "name">) => field.name === "Status",
-	);
-
-	invariant(
-		statusField,
-		"every Project should have a Status field (probably? If this is violated, please file an issue.)",
-	);
-
-	return {
-		projectId: res[queryTarget].projectV2.id,
-		projectName: res[queryTarget].projectV2.title,
-		statusFieldId: statusField.id,
-		statusFieldOptions: statusField.options,
-	};
+		throw e;
+	}
 }
 
 const projectInfo = await getProjectInfo();
@@ -693,7 +818,7 @@ if (
 	fail();
 }
 
-if (skippedLabels.length > 0) {
+if (skippedLabels.length > 0 && !opts.dryRun) {
 	const conf = await p.confirm({ message: "Would you like to continue?" });
 	if (p.isCancel(conf) || !conf) {
 		onCancel();
@@ -705,7 +830,7 @@ const existingLabelsToCreate = labelsToCreate.filter((label) =>
 	githubLabels.data.some((ghLabel) => ghLabel.name === label.github.name),
 );
 
-if (existingLabelsToCreate.length > 0) {
+if (existingLabelsToCreate.length > 0 && !opts.dryRun) {
 	const existingLabels = listConjunction.format(
 		existingLabelsToCreate.map((label) => renderGithubLabel(label)),
 	);
@@ -719,35 +844,41 @@ if (existingLabelsToCreate.length > 0) {
 }
 
 if (labelsToCreate.length > 0) {
-	const spin = p.spinner({ indicator: "timer" });
-	spin.start(`Creating labels [0/${labelsToCreate.length}]`);
-	let createdCount = 0;
-	let skippedCount = 0;
-	for (const [count, label] of labelsToCreate.entries()) {
-		try {
-			await octokit.request("POST /repos/{owner}/{repo}/labels", {
-				...baseRequest,
-				name: label.github.name,
-				color: label.github.color?.trim().replace(/^#/, ""),
-			});
-			createdCount++;
-		} catch (e) {
-			if (e instanceof RequestError && e.status === 422) {
-				// Label already exists, skip it
-				p.log.warn(
-					`Label ${chalk.yellow(label.github.name)} already exists, skipping...`,
-				);
-				skippedCount++;
-			} else {
-				// Re-throw other errors
-				throw e;
+	if (opts.dryRun) {
+		p.log.info(
+			`[dry-run] Would create ${chalk.blue(labelsToCreate.length)} labels in GitHub: ${labelsToCreate.map((l) => l.github.name).join(", ")}`,
+		);
+	} else {
+		const spin = p.spinner({ indicator: "timer" });
+		spin.start(`Creating labels [0/${labelsToCreate.length}]`);
+		let createdCount = 0;
+		let skippedCount = 0;
+		for (const [count, label] of labelsToCreate.entries()) {
+			try {
+				await octokit.request("POST /repos/{owner}/{repo}/labels", {
+					...baseRequest,
+					name: label.github.name,
+					color: label.github.color?.trim().replace(/^#/, ""),
+				});
+				createdCount++;
+			} catch (e) {
+				if (e instanceof RequestError && e.status === 422) {
+					// Label already exists, skip it
+					p.log.warn(
+						`Label ${chalk.yellow(label.github.name)} already exists, skipping...`,
+					);
+					skippedCount++;
+				} else {
+					// Re-throw other errors
+					throw e;
+				}
 			}
+			spin.message(`Creating labels [${count + 1}/${labelsToCreate.length}]`);
 		}
-		spin.message(`Creating labels [${count + 1}/${labelsToCreate.length}]`);
+		spin.stop(
+			`Created ${createdCount} labels${skippedCount > 0 ? `, skipped ${skippedCount} existing labels` : ""}.`,
+		);
 	}
-	spin.stop(
-		`Created ${createdCount} labels${skippedCount > 0 ? `, skipped ${skippedCount} existing labels` : ""}.`,
-	);
 }
 
 function mapMemberIds(trelloMemberIds: string[]): string[] {
@@ -756,16 +887,33 @@ function mapMemberIds(trelloMemberIds: string[]): string[] {
 
 type TrelloCard = (typeof trello.cards)[number];
 
-function getDescriptionForCard(card: TrelloCard): string {
-	return formatCardDescription(card, trello.checklists);
+function getDescriptionForCard(
+	card: TrelloCard,
+	uploadedUrlMap?: Map<string, string>,
+): string {
+	return formatCardDescription(
+		card,
+		trello.checklists,
+		undefined,
+		uploadedUrlMap,
+	);
 }
 
 function getLabelsForCard(card: TrelloCard): string[] {
 	return formatCardLabels(card, mappedLabels);
 }
 
-function getCommentsForCard(card: TrelloCard): string[] {
-	return formatCardComments(card, trello.actions, trello.members, validMembers);
+function getCommentsForCard(
+	card: TrelloCard,
+	uploadedUrlMap?: Map<string, string>,
+): string[] {
+	return formatCardComments(
+		card,
+		trello.actions,
+		trello.members,
+		validMembers,
+		uploadedUrlMap,
+	);
 }
 
 async function addIssueToProject(issueNodeId: string) {
@@ -894,7 +1042,7 @@ async function getExistingProjectItems() {
 }
 
 // Check and update statuses for existing issues in the project
-if (projectInfo && validStatusFields.size > 0) {
+if (!opts.dryRun && projectInfo && validStatusFields.size > 0) {
 	const existingSpin = p.spinner({ indicator: "timer" });
 	existingSpin.start("Checking existing project items...");
 
@@ -912,12 +1060,10 @@ if (projectInfo && validStatusFields.size > 0) {
 		for (const item of existingItems) {
 			// Try to find the corresponding Trello card by matching title
 			const trelloCard = trello.cards.find((card) => {
-				// Simple match by title - you might want to make this more sophisticated
 				return card.name === item.issueTitle;
 			});
 
 			if (!trelloCard) {
-				// Issue doesn't match any Trello card, skip it
 				skippedCount++;
 				continue;
 			}
@@ -926,7 +1072,6 @@ if (projectInfo && validStatusFields.size > 0) {
 			const expectedStatus = validStatusFields.get(trelloCard.idList);
 
 			if (!expectedStatus) {
-				// No status mapping for this list
 				skippedCount++;
 				continue;
 			}
@@ -950,7 +1095,11 @@ if (projectInfo && validStatusFields.size > 0) {
 }
 
 const spin = p.spinner({ indicator: "timer" });
-spin.start(`Creating ${chalk.blue(trello.cards.length)} issues`);
+spin.start(
+	opts.dryRun
+		? `[dry-run] Processing ${chalk.blue(trello.cards.length)} cards`
+		: `Creating ${chalk.blue(trello.cards.length)} issues`,
+);
 
 // Debug: Show the validStatusFields mapping
 if (projectInfo && validStatusFields.size > 0) {
@@ -963,50 +1112,108 @@ if (projectInfo && validStatusFields.size > 0) {
 	}
 }
 
+let totalImagesProcessed = 0;
+
 for (const [i, card] of trello.cards.entries()) {
-	const issue = await octokit.request("POST /repos/{owner}/{repo}/issues", {
-		...baseRequest,
-		title: card.name,
-		body: getDescriptionForCard(card),
-		labels: getLabelsForCard(card),
-		assignees: mapMemberIds(card.idMembers),
-		milestone: validMilestones.get(card.id)?.number,
+	const rawComments = trello.actions
+		.filter(
+			(
+				a,
+			): a is Extract<
+				(typeof trello.actions)[number],
+				{ type: "commentCard" }
+			> => "type" in a && a.type === "commentCard" && a.data.idCard === card.id,
+		)
+		.map((a) => a.data.text);
+
+	const imageUrlMap = await processImagesForCard(card, rawComments, {
+		dryRun: opts.dryRun,
+		repositoryId,
+		githubToken: group.ghToken,
+		trelloAuth,
+		onLog: (msg) => {
+			p.log.info(`  ${msg}`);
+		},
 	});
+	totalImagesProcessed += imageUrlMap.size;
 
-	const comments = getCommentsForCard(card);
-	for (const comment of comments) {
-		await octokit.request(
-			"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-			{
-				...baseRequest,
-				issue_number: issue.data.number,
-				body: comment,
-			},
+	const cardDesc = getDescriptionForCard(card, imageUrlMap);
+	const cardComments = getCommentsForCard(card, imageUrlMap);
+	const cardLabels = getLabelsForCard(card);
+	const assignees = mapMemberIds(card.idMembers);
+	const cardList = trello.lists.find((list) => list.id === card.idList);
+	const status = validStatusFields.get(card.idList);
+
+	if (opts.dryRun) {
+		p.log.info(`[dry-run] Card #${i + 1}: "${chalk.bold(card.name)}"`);
+		p.log.info(
+			`  ${chalk.dim("List:")} ${chalk.cyan(cardList?.name || card.idList)}${status ? ` -> Project Status: ${chalk.green(status.name)}` : ""}`,
 		);
-	}
-
-	if (projectInfo) {
-		const itemId = await addIssueToProject(issue.data.node_id);
-		const cardList = trello.lists.find((list) => list.id === card.idList);
-		const status = validStatusFields.get(card.idList);
-
-		if (status) {
+		if (cardLabels.length > 0) {
+			p.log.info(`  ${chalk.dim("Labels:")} ${cardLabels.join(", ")}`);
+		}
+		if (assignees.length > 0) {
+			p.log.info(`  ${chalk.dim("Assignees:")} @${assignees.join(", @")}`);
+		}
+		if (imageUrlMap.size > 0) {
 			p.log.info(
-				`Setting "${chalk.blue(card.name)}" (from list "${chalk.cyan(cardList?.name)}") to status ${chalk.green(status.name)}`,
+				`  ${chalk.dim("Images:")} ${chalk.yellow(imageUrlMap.size)} re-mapped to GitHub user-attachments`,
 			);
-			await setIssueStatus(itemId, status.id, status.name);
-		} else {
-			// Debug: log when status mapping is not found
-			p.log.warn(
-				`No status mapping found for card "${chalk.yellow(card.name)}" in list "${chalk.yellow(cardList?.name || card.idList)}"`,
+		}
+		if (cardComments.length > 0) {
+			p.log.info(`  ${chalk.dim("Comments:")} ${cardComments.length} comments`);
+		}
+	} else {
+		const issue = await octokit.request("POST /repos/{owner}/{repo}/issues", {
+			...baseRequest,
+			title: card.name,
+			body: cardDesc,
+			labels: cardLabels,
+			assignees,
+			milestone: validMilestones.get(card.id)?.number,
+		});
+
+		for (const comment of cardComments) {
+			await octokit.request(
+				"POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+				{
+					...baseRequest,
+					issue_number: issue.data.number,
+					body: comment,
+				},
 			);
+		}
+
+		if (projectInfo) {
+			const itemId = await addIssueToProject(issue.data.node_id);
+			if (status) {
+				p.log.info(
+					`Setting "${chalk.blue(card.name)}" (from list "${chalk.cyan(cardList?.name)}") to status ${chalk.green(status.name)}`,
+				);
+				await setIssueStatus(itemId, status.id, status.name);
+			} else {
+				p.log.warn(
+					`No status mapping found for card "${chalk.yellow(card.name)}" in list "${chalk.yellow(cardList?.name || card.idList)}"`,
+				);
+			}
 		}
 	}
 
 	spin.message(
-		`Creating ${chalk.blue(trello.cards.length)} issues • issue ${chalk.blue(i + 1)}/${chalk.blue(trello.cards.length)}`,
+		opts.dryRun
+			? `[dry-run] Processed ${chalk.blue(i + 1)}/${chalk.blue(trello.cards.length)} cards`
+			: `Creating ${chalk.blue(trello.cards.length)} issues • issue ${chalk.blue(i + 1)}/${chalk.blue(trello.cards.length)}`,
 	);
 }
 
-spin.stop(`Created ${chalk.blue(trello.cards.length)} issues`);
-p.outro();
+if (opts.dryRun) {
+	spin.stop(
+		`[dry-run] Finished processing ${chalk.blue(trello.cards.length)} cards (${chalk.yellow(totalImagesProcessed)} images re-mapped). No changes were made to GitHub.`,
+	);
+	p.outro("Dry run completed successfully!");
+} else {
+	spin.stop(
+		`Created ${chalk.blue(trello.cards.length)} issues (${chalk.yellow(totalImagesProcessed)} images uploaded).`,
+	);
+	p.outro();
+}

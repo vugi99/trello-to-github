@@ -1,3 +1,4 @@
+import { isImageFile, rewriteMarkdownImages } from "./image";
 import type { Label } from "./label";
 import type { Trello } from "./schemas";
 
@@ -130,25 +131,44 @@ export function getChecklistContentForCard(
 	return res.join("\n");
 }
 
+export function formatCardAttachments(
+	attachments: TrelloCard["attachments"],
+	uploadedUrlMap?: Map<string, string>,
+): string[] {
+	return attachments.map((att) => {
+		const targetUrl = uploadedUrlMap?.get(att.url) ?? att.url;
+		if (isImageFile(att.name, att.url)) {
+			return `![${att.name}](${targetUrl})`;
+		}
+		return `- [${att.name}](${targetUrl})`;
+	});
+}
+
 export function getDescriptionForCard(
 	card: TrelloCard,
 	allChecklists: TrelloChecklist[],
 	customAttachmentLines?: string[],
+	uploadedUrlMap?: Map<string, string>,
 ): string {
 	let body = "";
-	if (card.desc.length > 0) {
-		body += card.desc;
+	let desc = card.desc;
+	if (uploadedUrlMap && uploadedUrlMap.size > 0) {
+		desc = rewriteMarkdownImages(desc, uploadedUrlMap);
+	}
+
+	if (desc.length > 0) {
+		body += desc;
 	}
 
 	const checklistStr = getChecklistContentForCard(card, allChecklists);
 	if (checklistStr) {
-		if (card.desc.length > 0) {
+		if (desc.length > 0) {
 			body += "\n\n---\n\n";
 		}
 		body += checklistStr;
 	}
 
-	if (card.desc.length > 0 || checklistStr) {
+	if (desc.length > 0 || checklistStr) {
 		body += "\n\n---\n\n";
 	}
 	body += `> Migrated from [Trello Card](${card.url})\n`;
@@ -156,9 +176,7 @@ export function getDescriptionForCard(
 	if (customAttachmentLines) {
 		body += customAttachmentLines.join("\n");
 	} else {
-		body += card.attachments
-			.map((attachment) => `- [${attachment.name}](${attachment.url})`)
-			.join("\n");
+		body += formatCardAttachments(card.attachments, uploadedUrlMap).join("\n");
 	}
 
 	return body;
@@ -194,6 +212,7 @@ export function getCommentsForCard(
 	allActions: TrelloAction[],
 	trelloMembers: TrelloMember[],
 	validMembers: ValidMember[],
+	uploadedUrlMap?: Map<string, string>,
 ): string[] {
 	const res: string[] = [];
 	const commentActions = allActions.filter(
@@ -214,8 +233,13 @@ export function getCommentsForCard(
 			? `@${member}`
 			: `\`@${action.memberCreator.username}\``;
 
+		const text =
+			uploadedUrlMap && uploadedUrlMap.size > 0
+				? rewriteMarkdownImages(action.data.text, uploadedUrlMap)
+				: action.data.text;
+
 		const header = `## ${memberString} • ${action.date.toLocaleDateString()}`;
-		res.push(`${header}\n${action.data.text}`);
+		res.push(`${header}\n${text}`);
 	}
 
 	return res;
