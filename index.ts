@@ -47,6 +47,7 @@ const program = new Command()
 		"A path to a file that maps users and labels",
 	)
 	// TODO
+	.option("-y, --yes", "Skip confirmation prompts")
 	.option(
 		"--dry-run",
 		"Preview what will be transferred (no changes will be made)",
@@ -818,7 +819,7 @@ if (
 	fail();
 }
 
-if (skippedLabels.length > 0 && !opts.dryRun) {
+if (skippedLabels.length > 0 && !opts.dryRun && !opts.yes) {
 	const conf = await p.confirm({ message: "Would you like to continue?" });
 	if (p.isCancel(conf) || !conf) {
 		onCancel();
@@ -830,7 +831,7 @@ const existingLabelsToCreate = labelsToCreate.filter((label) =>
 	githubLabels.data.some((ghLabel) => ghLabel.name === label.github.name),
 );
 
-if (existingLabelsToCreate.length > 0 && !opts.dryRun) {
+if (existingLabelsToCreate.length > 0 && !opts.dryRun && !opts.yes) {
 	const existingLabels = listConjunction.format(
 		existingLabelsToCreate.map((label) => renderGithubLabel(label)),
 	);
