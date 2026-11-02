@@ -176,4 +176,5 @@ dist
 
 trello-data.json
 map.toml
+map_*.toml
 bun.lockb
