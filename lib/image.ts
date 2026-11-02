@@ -209,7 +209,7 @@ export interface ProcessImageOptions {
 export async function processImagesForCard(
 	card: {
 		desc: string;
-		attachments?: Array<{ name: string; url: string }>;
+		attachments?: Array<{ id?: string; name: string; url: string }>;
 	},
 	comments: string[] = [],
 	options: ProcessImageOptions = {},
@@ -218,6 +218,14 @@ export async function processImagesForCard(
 	const candidates: Array<{ url: string; name: string }> = [];
 
 	for (const att of card.attachments || []) {
+		// If attachment is already referenced in description (by URL or attachment ID),
+		// it will be picked up by extractMarkdownImageUrls(card.desc) below.
+		if (
+			card.desc &&
+			(card.desc.includes(att.url) || (att.id && card.desc.includes(att.id)))
+		) {
+			continue;
+		}
 		if (isImageFile(att.name, att.url)) {
 			candidates.push({ url: att.url, name: att.name });
 		}

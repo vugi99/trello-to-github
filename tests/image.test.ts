@@ -296,5 +296,41 @@ describe("image processing utilities", () => {
 			);
 			expect(logs.some((l) => l.includes("Uploaded image"))).toBe(true);
 		});
+
+		it("skips attachment candidate when preview of attachment is already embedded in description", async () => {
+			const mockCard = {
+				desc: "Preview: ![preview](https://trello.com/1/cards/c1/attachments/att99/previews/prev1/download/image.webp)",
+				attachments: [
+					{
+						id: "att99",
+						name: "image.png",
+						url: "https://trello.com/1/cards/c1/attachments/att99/download/image.png",
+					},
+				],
+			};
+
+			const mockFetch: FetchFn = async () =>
+				new Response(new Uint8Array([1, 2, 3]), {
+					status: 200,
+					headers: { "content-type": "image/webp" },
+				});
+
+			const urlMap = await processImagesForCard(mockCard, [], {
+				dryRun: true,
+				customFetch: mockFetch,
+			});
+
+			expect(urlMap.size).toBe(1);
+			expect(
+				urlMap.has(
+					"https://trello.com/1/cards/c1/attachments/att99/previews/prev1/download/image.webp",
+				),
+			).toBe(true);
+			expect(
+				urlMap.has(
+					"https://trello.com/1/cards/c1/attachments/att99/download/image.png",
+				),
+			).toBe(false);
+		});
 	});
 });
