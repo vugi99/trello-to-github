@@ -15,6 +15,15 @@ import {
 	renderGithubLabel,
 	renderTrelloLabel,
 } from "./lib/label";
+import {
+	type ValidMember,
+	getChecklistContentForCard as formatCardChecklist,
+	getCommentsForCard as formatCardComments,
+	getDescriptionForCard as formatCardDescription,
+	getLabelsForCard as formatCardLabels,
+	mapMemberId as formatMapMemberId,
+	mapMemberIds as formatMapMemberIds,
+} from "./lib/card";
 import { BoardExport, MapFormat } from "./lib/schemas";
 
 const program = new Command()
@@ -696,116 +705,29 @@ if (labelsToCreate.length > 0) {
 }
 
 function mapMemberId(trelloMemberId: string): string | null {
-	const trelloMember = trello.members.find((mem) => mem.id === trelloMemberId);
-	if (!trelloMember) return null;
-
-	// Trello members can be searched by ID, username, or full name
-	const member = validMembers.find((mem) =>
-		[trelloMember.id, trelloMember.username, trelloMember.fullName].includes(
-			mem.trelloName,
-		),
-	);
-	if (!member?.github) return null;
-	return member.github.data.login;
+	return formatMapMemberId(trelloMemberId, trello.members, validMembers);
 }
 
 function mapMemberIds(trelloMemberIds: string[]): string[] {
-	return trelloMemberIds.map(mapMemberId).filter((m) => m !== null);
+	return formatMapMemberIds(trelloMemberIds, trello.members, validMembers);
 }
 
 type TrelloCard = (typeof trello.cards)[number];
 
 function getDescriptionForCard(card: TrelloCard): string {
-	let body = "";
-	if (card.desc.length > 0) {
-		body += card.desc;
-	}
-
-	const checklistStr = getChecklistContentForCard(card);
-	if (checklistStr) {
-		if (card.desc.length > 0) {
-			body += "\n\n---\n\n";
-		}
-		body += checklistStr;
-	}
-
-	if (card.desc.length > 0 || checklistStr) {
-		body += "\n\n---\n\n";
-	}
-	body += `> Migrated from [Trello Card](${card.url})\n`;
-	body += card.attachments
-		.map((attachment) => `- [${attachment.name}](${attachment.url})`)
-		.join("\n");
-
-	return body;
+	return formatCardDescription(card, trello.checklists);
 }
 
 function getLabelsForCard(card: TrelloCard): string[] {
-	const res = [];
-	for (const trelloName of card.labels.map((label) => label.name)) {
-		const found = mappedLabels.find(
-			(label) =>
-				label.type !== "listMapped" && label.trello.name === trelloName,
-		);
-		if (found) {
-			res.push(found.github.name);
-		}
-	}
-
-	const listLabel = mappedLabels.find(
-		(label) =>
-			label.type === "listMapped" && label.trelloList.id === card.idList,
-	);
-	if (listLabel) {
-		res.push(listLabel.github.name);
-	}
-
-	return res;
+	return formatCardLabels(card, mappedLabels);
 }
 
 function getChecklistContentForCard(card: TrelloCard): string | null {
-	const res = [];
-	const checklists = card.idChecklists
-		.map((id) => trello.checklists.find((checklist) => checklist.id === id))
-		.filter((check) => check !== undefined);
-
-	if (checklists.length < 1) {
-		return null;
-	}
-
-	res.push("\n## Checklists");
-	for (const checklist of checklists) {
-		res.push(`### ${checklist.name}`);
-		for (const item of checklist.checkItems) {
-			if (item.state === "complete") {
-				res.push(`- [x] ${item.name}`);
-			} else {
-				res.push(`- [ ] ${item.name}`);
-			}
-		}
-	}
-
-	return res.join("\n");
+	return formatCardChecklist(card, trello.checklists);
 }
 
 function getCommentsForCard(card: TrelloCard): string[] {
-	const res = [];
-	const commentActions = trello.actions.filter(
-		(action) => action.type === "commentCard" && action.data.idCard === card.id,
-	);
-	commentActions.sort((a, b) => a.date.getTime() - b.date.getTime());
-
-	for (const action of commentActions) {
-		const member = mapMemberId(action.memberCreator.id);
-		const memberString = member
-			? `@${member}`
-			: `\`@${action.memberCreator.username}\``;
-
-		const header = `## ${memberString} • ${action.date.toLocaleDateString()}`;
-		res.push(`${header}\n${action.data.text}`);
-	}
-
-	return res;
+	return formatCardComments(card, trello.actions, trello.members, validMembers);
 }
 
 async function addIssueToProject(issueNodeId: string) {
