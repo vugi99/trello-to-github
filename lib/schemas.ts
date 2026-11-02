@@ -111,33 +111,36 @@ export const MapFormat = z.object({
 	}),
 	// (optional) The ID of the project to add created issues to
 	project: z.int().optional(),
-	labels: z.array(
-		z.discriminatedUnion("create", [
-			// fetch label
-			z.object({
-				// The name of the label in Trello.
-				trello: z.string().min(1),
-				// If a string, assumed to be the name of a label. If an int, it's the ID of the label.
-				github: z.union([z.string().min(1), z.int()]),
-				// Whether to create the label, if it does not exist.
-				create: z.literal(false).optional().default(false),
-			}),
-			// create new label
-			z.object({
-				// The name of the label in Trello.
-				trello: z.string().min(1),
-				// The name of the label to create.
-				github: z.string().min(1),
-				// Whether to create the label, if it does not exist.
-				create: z.literal(true),
-				// The color to create the GitHub label with.
-				color: z
-					.string()
-					.regex(/^#?([0-9a-f]{6}|[0-9a-f]{3})$/i)
-					.optional(),
-			}),
-		]),
-	),
+	labels: z
+		.array(
+			z.discriminatedUnion("create", [
+				// fetch label
+				z.object({
+					// The name of the label in Trello.
+					trello: z.string().min(1),
+					// If a string, assumed to be the name of a label. If an int, it's the ID of the label.
+					github: z.union([z.string().min(1), z.int()]),
+					// Whether to create the label, if it does not exist.
+					create: z.literal(false).optional().default(false),
+				}),
+				// create new label
+				z.object({
+					// The name of the label in Trello.
+					trello: z.string().min(1),
+					// The name of the label to create.
+					github: z.string().min(1),
+					// Whether to create the label, if it does not exist.
+					create: z.literal(true),
+					// The color to create the GitHub label with.
+					color: z
+						.string()
+						.regex(/^#?([0-9a-f]{6}|[0-9a-f]{3})$/i)
+						.optional(),
+				}),
+			]),
+		)
+		.optional()
+		.default([]),
 	// maps assignees
 	users: z
 		.array(
