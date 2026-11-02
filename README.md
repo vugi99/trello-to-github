@@ -53,6 +53,15 @@ bun run index.ts --trello-export trello-data.json --map map.toml
 - `--keep-closed`  
   Also transfer cards that have been closed (archived) on Trello.
 
+- `--no-fix-references` (or `--skip-fix-references`)  
+  Disable automatically fixing cross-references between Trello cards after import.
+
+- `--reference-format <format>`  
+  Format for issue references: `id` (default: `#<issue-number>`), `url` (`https://github.com/.../issues/<number>`), or `markdown` (`[#<number>](...)`).
+
+- `--fix-references-only`  
+  Only scan and fix cross-references between cards on existing GitHub issues without importing new cards.
+
 - `--trello-export <file.json>`  
   Path to a Trello export JSON file.  
   You can get this by downloading:  
@@ -125,6 +134,35 @@ create = true
 1. Go to your Trello board.
 2. Visit: `https://trello.com/b/<board-id>.json`
 3. Save the file locally and use it with `--trello-export`.
+
+## Fixing Card References
+
+When Trello cards contain links to other cards on the board, they are automatically replaced with GitHub issue references (`#<issue-number>` or issue URL) after the import completes.
+
+The footer line `> Migrated from [Trello Card](...)` strictly retains the original Trello link.
+
+### Standalone Command
+
+You can also run the reference fixer standalone anytime on already-imported repositories:
+
+```bash
+# Using bun script
+bun run fix-references --map map.toml --dry-run
+bun run fix-references --map map.toml
+
+# Or using the CLI binary
+./fix-references.ts --map map.toml --trello-export trello.json
+
+# Or using the subcommand
+bun run index.ts fix-references --map map.toml
+```
+
+Options for standalone:
+- `-m, --map <file.toml>`: Path to mapping file.
+- `--trello-export <file.json>`: Optional Trello board export for additional card ID and slug resolution.
+- `--reference-format <id|url|markdown>`: Format of references (`#<issue-number>`, ticket URL, or `[#<issue-number>](url)`). Default is `id`.
+- `--issue <number>`: Limit to fixing references in a single issue.
+- `--dry-run`: Preview changes without editing GitHub issues or comments.
 
 ## Notes
 

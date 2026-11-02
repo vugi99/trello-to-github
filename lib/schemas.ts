@@ -44,6 +44,9 @@ export const BoardExport = z.object({
 			id: z.string(),
 			name: z.string(),
 			url: z.string(),
+			shortLink: z.string().optional(),
+			shortUrl: z.string().optional(),
+			idShort: z.number().optional(),
 			// called "archived" in Trello's Web UI
 			closed: z.boolean(),
 			desc: z.string(),

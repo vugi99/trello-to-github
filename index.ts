@@ -25,7 +25,19 @@ import {
 	renderGithubLabel,
 	renderTrelloLabel,
 } from "./lib/label";
+import {
+	extractTrelloCardKey,
+	fixRepositoryReferences,
+	type ReferenceFormat,
+} from "./lib/references";
 import { BoardExport, MapFormat } from "./lib/schemas";
+
+// Handle standalone "fix-references" subcommand directly
+if (process.argv[2] === "fix-references") {
+	process.argv.splice(2, 1);
+	await import("./fix-references.ts");
+	process.exit(0);
+}
 
 // Load environment variables from .env file if present
 loadEnvFile();
@@ -65,6 +77,20 @@ const program = new Command()
 		"Names or IDs of Trello columns/lists to exclude from conversion",
 	)
 	.option("--exclude-list <lists...>", "Alias for --exclude-column")
+	.option(
+		"--no-fix-references",
+		"Disable automatically fixing Trello card references after import",
+	)
+	.option("--skip-fix-references", "Alias for --no-fix-references")
+	.option(
+		"--reference-format <format>",
+		"Format for issue references: id, url, or markdown (default: id)",
+		"id",
+	)
+	.option(
+		"--fix-references-only",
+		"Only run the reference fixer on existing issues without importing cards",
+	)
 	.addOption(
 		new Option(
 			"--trello-export <file.json>",
@@ -349,6 +375,44 @@ const repoData = {
 };
 const defaultHeaders = { "X-GitHub-Api-Version": "2022-11-28" };
 const baseRequest = { ...repoData, headers: defaultHeaders };
+
+if (opts.fixReferencesOnly) {
+	const refSpin = p.spinner({ indicator: "timer" });
+	refSpin.start(
+		opts.dryRun
+			? "[dry-run] Scanning for Trello card references..."
+			: "Scanning and fixing Trello card references...",
+	);
+
+	const refResult = await fixRepositoryReferences({
+		octokit,
+		owner: repoData.owner,
+		repo: repoData.repo,
+		trelloCards: trello.cards,
+		dryRun: opts.dryRun,
+		format: (opts.referenceFormat as ReferenceFormat) || "id",
+		onLog: (msg) => {
+			refSpin.message(msg);
+		},
+	});
+
+	refSpin.stop("Scan completed.");
+	p.note(
+		`Scanned issues:   ${refResult.scannedIssues}\nUpdated issues:   ${refResult.updatedIssues}\nScanned comments: ${refResult.scannedComments}\nUpdated comments: ${refResult.updatedComments}\nTotal references: ${refResult.totalReplacements}`,
+		"Summary",
+	);
+
+	if (opts.dryRun) {
+		p.outro(
+			`[dry-run] Finished preview. ${refResult.updatedIssues} issue(s) and ${refResult.updatedComments} comment(s) would be updated.`,
+		);
+	} else {
+		p.outro(
+			`Successfully updated ${refResult.updatedIssues} issue(s) and ${refResult.updatedComments} comment(s) (${refResult.totalReplacements} reference(s) fixed).`,
+		);
+	}
+	process.exit(0);
+}
 
 let repositoryId: number | string | bigint = 0;
 // biome-ignore lint/suspicious/noExplicitAny: Octokit response data types
@@ -1114,6 +1178,7 @@ if (projectInfo && validStatusFields.size > 0) {
 }
 
 let totalImagesProcessed = 0;
+const trelloToIssueMap = new Map<string, number>();
 
 for (const [i, card] of trello.cards.entries()) {
 	const rawComments = trello.actions
@@ -1146,6 +1211,14 @@ for (const [i, card] of trello.cards.entries()) {
 	const status = validStatusFields.get(card.idList);
 
 	if (opts.dryRun) {
+		const simulatedIssueNumber = i + 1;
+		const cardKey = card.shortLink || extractTrelloCardKey(card.url);
+		trelloToIssueMap.set(card.id, simulatedIssueNumber);
+		if (cardKey) trelloToIssueMap.set(cardKey, simulatedIssueNumber);
+		if (card.url) trelloToIssueMap.set(card.url, simulatedIssueNumber);
+		if (card.shortUrl)
+			trelloToIssueMap.set(card.shortUrl, simulatedIssueNumber);
+
 		p.log.info(`[dry-run] Card #${i + 1}: "${chalk.bold(card.name)}"`);
 		p.log.info(
 			`  ${chalk.dim("List:")} ${chalk.cyan(cardList?.name || card.idList)}${status ? ` -> Project Status: ${chalk.green(status.name)}` : ""}`,
@@ -1173,6 +1246,12 @@ for (const [i, card] of trello.cards.entries()) {
 			assignees,
 			milestone: validMilestones.get(card.id)?.number,
 		});
+
+		const cardKey = card.shortLink || extractTrelloCardKey(card.url);
+		trelloToIssueMap.set(card.id, issue.data.number);
+		if (cardKey) trelloToIssueMap.set(cardKey, issue.data.number);
+		if (card.url) trelloToIssueMap.set(card.url, issue.data.number);
+		if (card.shortUrl) trelloToIssueMap.set(card.shortUrl, issue.data.number);
 
 		for (const comment of cardComments) {
 			await octokit.request(
@@ -1205,6 +1284,38 @@ for (const [i, card] of trello.cards.entries()) {
 			? `[dry-run] Processed ${chalk.blue(i + 1)}/${chalk.blue(trello.cards.length)} cards`
 			: `Creating ${chalk.blue(trello.cards.length)} issues • issue ${chalk.blue(i + 1)}/${chalk.blue(trello.cards.length)}`,
 	);
+}
+
+if (opts.fixReferences !== false && !opts.skipFixReferences) {
+	const refSpin = p.spinner({ indicator: "timer" });
+	refSpin.start(
+		opts.dryRun
+			? "[dry-run] Checking and fixing cross-references between cards..."
+			: "Fixing cross-references between cards...",
+	);
+
+	const refResult = await fixRepositoryReferences({
+		octokit,
+		owner: repoData.owner,
+		repo: repoData.repo,
+		cardToIssueMap: trelloToIssueMap,
+		trelloCards: trello.cards,
+		dryRun: opts.dryRun,
+		format: (opts.referenceFormat as ReferenceFormat) || "id",
+		onLog: (msg) => {
+			refSpin.message(msg);
+		},
+	});
+
+	if (refResult.updatedIssues > 0 || refResult.updatedComments > 0) {
+		refSpin.stop(
+			opts.dryRun
+				? `[dry-run] Found ${chalk.yellow(refResult.totalReplacements)} cross-reference(s) across ${chalk.yellow(refResult.updatedIssues)} issue(s) and ${chalk.yellow(refResult.updatedComments)} comment(s) to fix.`
+				: `Fixed ${chalk.green(refResult.totalReplacements)} cross-reference(s) across ${chalk.green(refResult.updatedIssues)} issue(s) and ${chalk.green(refResult.updatedComments)} comment(s).`,
+		);
+	} else {
+		refSpin.stop("No cross-references between cards required fixing.");
+	}
 }
 
 if (opts.dryRun) {
