@@ -175,4 +175,5 @@ dist
 .DS_Store
 
 trello-data.json
+map.toml
 bun.lockb
